@@ -1,0 +1,154 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Creates a Service Catalog Portfolio with 1 Product."
+Parameters:
+  TemplateS3Bucket:
+    Description: The name of S3 bucket where the CloudFormation template is stored.
+    Type: String
+    Default: "windrichtestbucket"
+  TemplateS3Path:
+    Description: The S3 path to the CloudFormation template is stored.
+    Type: String
+    Default: "service-catalog/instances-stack.yaml"
+  RoleName:
+    Description: The IAM Role name to be created as the launch constraint of the product. This role will be used to launch the products.
+    Type: String
+    Default: "ServiceCatalog-PenTesting-LaunchRole"
+  PortfolioName:
+    Description: The name of the Portfolio being created.
+    Type: String
+    Default: "Penetration Testing Portfolio"
+  PortfolioDescription:
+    Description: The description of the Portfolio being created.
+    Type: String
+    Default: "Penetration Testing Portfolio"
+  PortfolioProvider:
+    Description: The provider of the Portfolio being created.
+    Type: String
+    Default: "Temasek Polytechnic Cyber Security Department"
+  ProductName:
+    Description: The name of the Product being created.
+    Type: String
+    Default: "Penetration Testing Instances"
+  ProductDescription:
+    Description: The description of the Product being created.
+    Type: String
+    Default: "This product includes 1 Kali Linux server and 1 Web server"
+  ProductDistributor:
+    Description: The distributor of the Product being created.
+    Type: String
+    Default: "Temasek Polytechnic Cyber Security Department"
+  ProductOwner:
+    Description: The owner of the Product being created.
+    Type: String
+    Default: "Temasek Polytechnic Cyber Security Department"
+  ProductSupportDescription:
+    Description: The support information about the Product being created.
+    Type: String
+    Default: "Please reach out to IT for support"
+  ProductSupportEmail:
+    Description: The contact email for Product support.
+    Type: String
+    Default: "it@temasek.sg"
+  ProductSupportUrl:
+    Description: The contact URLfor Product support.
+    Type: String
+    Default: "https://it.temasek.sg"
+Resources:
+  ServiceCatalogPortfolio:
+    Type: AWS::ServiceCatalog::Portfolio
+    Properties:
+      Description: !Ref PortfolioDescription
+      DisplayName: !Ref PortfolioName
+      ProviderName: !Ref PortfolioProvider
+  ServiceCatalogProduct:
+    Type: "AWS::ServiceCatalog::CloudFormationProduct"
+    Properties:
+      Name: !Ref ProductName
+      Description: !Ref ProductDescription
+      Owner: !Ref ProductOwner
+      SupportDescription: !Ref ProductSupportDescription
+      SupportEmail: !Ref ProductSupportEmail
+      SupportUrl: !Sub ${ProductSupportUrl}
+      Distributor: !Ref ProductDistributor
+      ProvisioningArtifactParameters:
+        - Info:
+            LoadTemplateFromURL: !Sub "https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Path}"
+  ServiceCatalogPortfolioProductAssociation:
+    Type: "AWS::ServiceCatalog::PortfolioProductAssociation"
+    Properties:
+      PortfolioId: !Ref ServiceCatalogPortfolio
+      ProductId: !Ref ServiceCatalogProduct
+  InstanceTypeTemplateConstraint:
+    Type: AWS::ServiceCatalog::LaunchTemplateConstraint
+    Properties:
+      Description: Only allows t3 instance types
+      PortfolioId: !Ref ServiceCatalogPortfolio
+      ProductId: !Ref ServiceCatalogProduct
+      Rules: >
+        {
+          "InstanceTypeRule": {
+            "Assertions": [
+              {
+                "Assert": {
+                  "Fn::Contains": [
+                    [
+                      "t3.small",
+                      "t3.large",
+                      "t3.medium",
+                      "t3.micro",
+                      "t3.nano"
+                    ],
+                    {
+                      "Ref": "InstanceType"
+                    }
+                  ]
+                },
+                "AssertDescription": "Only allow t3 instances"
+              }
+            ]
+          }
+        }
+  ProductIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - servicecatalog.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:DeleteStack"
+                  - "cloudformation:DescribeStackEvents"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:GetTemplateSummary"
+                  - "cloudformation:SetStackPolicy"
+                  - "cloudformation:ValidateTemplate"
+                  - "cloudformation:UpdateStack"
+                  - "ec2:*"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "s3:ExistingObjectTag/servicecatalog:provisioning": "true"
+          PolicyName: ServiceCatalogLaunchConstraintPolicy
+      RoleName: !Ref RoleName
+  ProductLaunchConstraint:
+    Type: AWS::ServiceCatalog::LaunchRoleConstraint
+    Properties:
+      RoleArn: !GetAtt ProductIamRole.Arn
+      PortfolioId: !Ref ServiceCatalogPortfolio
+      ProductId: !Ref ServiceCatalogProduct
