@@ -1,0 +1,105 @@
+#!/bin/zsh
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qy
+apt-get install -qy kali-desktop-xfce xrdp
+apt-get install -qy tomcat9 guacd 
+
+# Download client WAR file
+wget -nv "https://apache.org/dyn/closer.lua/guacamole/1.3.0/binary/guacamole-1.3.0.war?action=download" 
+mkdir -p /etc/guacamole/
+mv "guacamole-1.3.0.war?action=download" /etc/guacamole/guacamole.war
+# Guacamole as ROOT app
+rm -rf /var/lib/tomcat9/webapps/ROOT/
+cp  /etc/guacamole/guacamole.war /var/lib/tomcat9/webapps/ROOT.war
+
+
+# user-mapping
+cat << EoF > /etc/guacamole/user-mapping.xml
+<user-mapping>
+  <authorize 
+      username="kali"
+      password="`echo -n "admin123" | md5sum | cut -d ' ' -f 1`"
+      encoding="md5">
+      <connection name="RDP">
+      <protocol>rdp</protocol>
+         <param name="hostname">127.0.0.1</param>
+         <param name="port">3389</param>
+         <param name="color-depth">16</param>
+      </connection>
+  </authorize>
+</user-mapping> 
+EoF
+
+# GUACD auth
+cat << EoF > /etc/guacamole/guacamole.properties 
+user-mapping:    /etc/guacamole/user-mapping.xml
+auth-provider: net.sourceforge.guacamole.net.basic.BasicFileAuthenticationProvider
+basic-user-mapping:    /etc/guacamole/user-mapping.xml
+EoF
+
+
+# Configure Tomcat to listen on HTTP instead of TCP 8080 
+cp /var/lib/tomcat9/conf/server.xml /var/lib/tomcat9/conf/server.xml.bak
+sed -i 's/\"8080\"/\"80\"/g' /var/lib/tomcat9/conf/server.xml 
+
+
+# NICE DCV
+cat << EoF > /etc/systemd/system/dcv-kaliuser.service
+[Unit]
+Description=Create DCV session for user kali
+After=default.target network.target 
+
+[Service]
+ExecStart=/opt/dcv-kali-user-session.sh 
+
+[Install]
+WantedBy=default.target
+EoF
+
+cat << EoF > /opt/dcv-kali-user-session.sh
+#!/bin/zsh
+while true;
+do
+  if (/usr/bin/dcv list-sessions | grep kali 1>dev/null)
+  then
+    sleep 5
+  else
+    /usr/bin/dcv create-session kali --owner kali --storage-root /home/kali/Storage
+    /usr/bin/dcv list-sessions
+  fi
+done
+EoF
+
+chmod +x /opt/dcv-kali-user-session.sh
+
+# NICE DCV
+cd /tmp/
+wget -nv https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY
+gpg --import NICE-GPG-KEY
+wget -nv https://d1uj6qtbmh3dt5.cloudfront.net/2021.2/Servers/nice-dcv-2021.2-11135-ubuntu2004-x86_64.tgz
+tar -xvzf nice-dcv-2021.2-11135-ubuntu2004-x86_64.tgz && cd nice-dcv-2021.2-11135-ubuntu2004-x86_64
+gpg --import NICE-GPG-KEY
+tar -xvzf nice-dcv-2021.2-11135-ubuntu2004-x86_64.tgz && cd nice-dcv-2021.2-11135-ubuntu2004-x86_64
+ln -s /etc/os-release /etc/lsb-release 
+apt-get install ./nice-dcv-server_2021.2.11135-1_amd64.ubuntu2004.deb -y 
+apt-get install ./nice-dcv-web-viewer_2021.2.11135-1_amd64.ubuntu2004.deb -y 
+usermod -aG video dcv 
+apt-get install ./nice-xdcv_2021.2.408-1_amd64.ubuntu2004.deb -y 
+apt-get install pulseaudio-utils -y
+# https://docs.aws.amazon.com/dcv/latest/adminguide/enable-quic.html
+cp /etc/dcv/dcv.conf /etc/dcv/dcv.conf.org
+sed -i '/^\[connectivity/a enable-quic-frontend=true' /etc/dcv/dcv.conf
+# session storage: https://docs.aws.amazon.com/dcv/latest/userguide/using-transfer.html
+mkdir -p /home/kali/Storage
+chown kali:kali /home/kali/Storage
+
+
+chpasswd <<<"kali:admin123"
+
+systemctl daemon-reload
+systemctl enable --now dcv-kaliuser.service
+systemctl enable --now dcvserver  
+systemctl enable --now tomcat9 guacd xrdp
+
+  
